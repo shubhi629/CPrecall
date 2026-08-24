@@ -25,6 +25,5 @@ We designed the initial user interface for the CP Recall browser extension.
 The UI was structured around the Revision Assistant concept and the overall CP Recall workflow. Different sections were organized to present relevant problem, pattern, performance, and review-related information to the student when required.
 
 The extension UI was designed to work alongside the existing LeetCode problem-solving interface. This provides a foundation for integrating the extension with problem detection, performance tracking, pattern mastery, and FSRS-based review scheduling in later stages of development.
-`-o` *for output filename and a list of input*
-*filenames to process.*
+
 
