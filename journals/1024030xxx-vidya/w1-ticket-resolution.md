@@ -2,23 +2,23 @@
 
 # W1 : Designing the CP Recall Browser Extension UI
 
-Error
+# Error
 
 The CP Recall project initially required a suitable interface for the browser extension through which the student could interact with the system while solving problems on LeetCode.
 
-Relevant Context
+# Relevant Context
 
 CP Recall works alongside LeetCode through a browser extension. The extension can provide a Revision Assistant interface when required during the problem-solving process.
 
 The interface needs to support the CP Recall workflow and present relevant information related to the current problem, pattern, performance, and review process.
 
-Key Observation
+# Key Observation
 
 The extension should act as an assisting layer around the existing LeetCode workflow rather than replacing the LeetCode interface.
 
 Therefore, the UI needed to be simple, organized, and focused on the information relevant to CP Recall. The interface also needed to be structured so that it can later be connected with the backend and other system components.
 
-Solution
+# Solution
 
 We designed the initial user interface for the CP Recall browser extension.
 
