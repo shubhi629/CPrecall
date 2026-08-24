@@ -113,7 +113,7 @@ Provide pattern dashboard API.
 Provide problem detail API.
 17. Important Rules
 The extension is a collector/display layer, not the source of truth for mastery.
-The LLM analyzes code; it does not need to own the CPRecal mastery algorithm.
+The LLM analyzes code; it does not need to own the CPRecall mastery algorithm.
 Backend is the source of truth for persisted mastery and review state.
 Problem mastery and pattern mastery are different metrics.
 Shared problem metadata and user-specific performance must be separated.
