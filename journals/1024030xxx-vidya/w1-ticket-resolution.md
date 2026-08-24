@@ -1,6 +1,6 @@
-# Week 1 : Order of Flags in Compilation Command
+# Week 1 : CP Recall Extension UI Development
 
-# Order of Flags
+# W1 : Designing the CP Recall Browser Extension UI
 
 ## Error:
 
