@@ -1,19 +1,23 @@
-Week 2: CP Recall Frontend Development
-W2: Developing the CP Recall Web Frontend
-Error
+# Week 2: CP Recall Frontend Development
+# W2: Developing the CP Recall Web Frontend
+# Error
+
 After designing the initial interface, the CP Recall project needed a functional frontend that could represent the planned workflow. The frontend had to provide pages for authentication, home/dashboard, problem details, pattern information, and other CP Recall features while keeping the interface simple and consistent.
 
-Relevant Context
+# Relevant Context
+
 The CP Recall frontend was developed as a React-based client application using Vite. The application needed to support different sections of the system, including user login and registration, the main dashboard, problem library, problem details, and pattern-related information.
 
 The frontend also needed a reusable component structure so that common elements such as the sidebar, top header, theme switcher, loading states, difficulty badges, mastery indicators, and metric cards could be used across different pages.
 
-Key Observation
+# Key Observation
+
 A large frontend application becomes difficult to maintain if every page is developed independently. Therefore, the interface needed to be divided into reusable components, pages, contexts, and services.
 
 The frontend was also structured so that it could later communicate with the CP Recall backend through API services without requiring major changes to the UI.
 
-Solution
+# Solution
+
 We implemented the initial functional frontend for CP Recall using React and Vite. Authentication pages such as Login and Register were created along with protected and public routing to control access to different sections of the application.
 
 The main application structure was developed with reusable components including the sidebar, top header, mobile drawer, theme switcher, difficulty badges, mastery bars, mastery rings, metric cards, pattern tags, and common loading/empty states.
@@ -21,4 +25,3 @@ The main application structure was developed with reusable components including 
 Pages such as the Home dashboard, Pattern Dashboard, Problem Library, and Problem Details were also implemented to represent the planned CP Recall workflow. A shared authentication context and theme context were added to manage application-wide state.
 
 API and utility service files were also organized in the frontend so that the client can later be connected with the backend. Basic frontend tests were added for important components and pages to verify that the implemented interface behaves as expected.
-
