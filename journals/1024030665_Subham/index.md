@@ -8,10 +8,16 @@ Name: Subham Kumar
 ## Week 1
 
 * **W1 : Identifying the correct LeetCode GraphQL queries**
-  `w1-graphql-query-resolution.md`
 
 * **W1 : Preventing old submissions from being detected as new submissions**
-  `w1-old-submission-detection.md`
 
 * **W1 : Resetting submission tracking for continuous submissions**
-  `w1-submission-state-reset.md`
+
+
+## Week 2
+
+* **W2 : Designing Normalized Data Models for Mastery, Patterns, and FSRS State**
+
+* **W2 : Resolving Dynamic A -> B Recall Targets in Problem and Dashboard Routes**
+
+* **W2 : Enforcing Strict Multi-User Data Isolation and Indexing in API Routes**
