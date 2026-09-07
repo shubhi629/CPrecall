@@ -1,0 +1,562 @@
+\documentclass{tietreport}
+
+% Import images
+\usepackage{graphicx}
+
+% Bibliography configuration
+\usepackage[
+  date=year,
+  style=alphabetic,
+  backend=biber,
+  sorting=nty,
+  maxnames=5,
+  minnames=3,
+  maxalphanames=4,
+  minalphanames=3,
+  backref=true,
+  doi=false,
+  isbn=false,
+  url=false,
+  eprint=false
+]{biblatex}
+\addbibresource{references.bib}
+
+%% ==================================================
+%% CUSTOMIZE THESE FIELDS FOR YOUR PROJECT
+%% ==================================================
+
+% Course/Lab header
+\TitlePageHeader{%
+  UCS 503- Software Engineering%
+}
+
+% Main project title
+\ProjectTitle{%
+  CPRecall%
+}
+
+% Subtitle or project description
+\ProjectSubTitle{%
+  A Personalized LeetCode Learning, Mastery, and
+  Spaced-Recall System -- Progress Report%
+}
+
+% Student information (up to 4 students)
+\author{%
+  \texttt{1024030665} Subham Kumar \\
+  \texttt{1024030666} Tanush Grover\\
+  \texttt{1024030669} Shubhi Singh%
+}
+
+% Group number, degree, year, program
+\TitlePageSubText{%
+  Group: Nexus 3 BE Third Year, CSE%
+}
+
+% Faculty advisor/guide name
+\AdvisorName{%
+  Raghav B. Venkataramaiyer%
+}
+
+% Evaluation period and department info
+\TitlePageFooterText{{%
+    \large Mid-Semester Evaluation \\[0.2cm]
+    \bfseries Computer Science and Engineering
+    Department%
+  } \\[0.15cm]
+  Thapar Institute of Engineering and Technology,
+  Patiala%
+}
+
+%% ==================================================
+
+\begin{document}
+
+% Generate title page
+\maketitle
+
+% Table of contents (auto-generated from chapters)
+\tableofcontents
+
+% ===== CHAPTER 1: INTRODUCTION =====
+
+\chapter{Introduction}
+
+\section{Background and Context}
+
+Competitive programmers and interview
+aspirants typically solve a large number of
+LeetCode problems, but plain problem-solving
+volume does not by itself guarantee long-term
+retention of the underlying Data Structures
+and Algorithms (DSA) patterns. A user may
+solve a problem once, yet forget the pattern
+or the optimal approach weeks later because
+there is no structured mechanism that
+(a) evaluates how well the problem was
+actually solved, and (b) schedules a future
+review at the right time.
+
+CPRecal (previously named CodeRecall) is
+being built to close this gap. It is a
+personalized LeetCode learning, mastery, and
+recall system that observes a user's solving
+behaviour on LeetCode, analyses the submitted
+code for its actual and optimal complexity,
+computes a quantitative mastery score for the
+problem, aggregates that mastery at the
+DSA-pattern level, and finally schedules
+future revisions using the FSRS (Free Spaced
+Repetition Scheduler) algorithm~\cite{fsrs}.
+
+\subsection{Problem Statement}
+
+Given that a user solves problems on LeetCode
+without any external tracking, there is
+currently no automated way to:
+\begin{itemize}
+  \item objectively score how efficiently a
+    specific problem was solved (in terms of
+    time complexity, number of attempts, time
+    taken, and hints used),
+  \item separate a user's mastery of an
+    individual problem from their mastery of
+    the broader DSA pattern that problem
+    belongs to, and
+  \item decide \emph{when} that user should be
+    made to revisit the problem or pattern so
+    that retention is maximised.
+\end{itemize}
+CPRecal addresses this by combining a browser
+extension for observation, an LLM-based code
+analysis step, a backend scoring and
+scheduling engine, and a dashboard for
+review.
+
+\section{Project Objectives}
+
+\begin{enumerate}
+  \item \textbf{Objective 1:} Capture a
+    user's LeetCode solving activity (problem
+    metadata, session time, submission
+    history, and the final accepted code)
+    automatically through a Tampermonkey
+    browser extension, with no manual data
+    entry beyond an optional hints-used
+    count.
+  \item \textbf{Objective 2:} Analyse each
+    accepted solution's actual and optimal
+    time/space complexity using an LLM, and
+    convert this, along with the other raw
+    solving signals, into a weighted
+    \emph{Problem Mastery} score.
+  \item \textbf{Objective 3:} Aggregate
+    problem-level mastery into a
+    \emph{Pattern Mastery} score per DSA
+    pattern, and drive a spaced-repetition
+    review schedule for each user using the
+    FSRS algorithm, surfaced through a React
+    dashboard.
+\end{enumerate}
+
+These objectives were defined and finalised
+during the design phase reported in this
+document; implementation proceeds directly
+against this specification.
+
+% ===== CHAPTER 2: METHODOLOGY & DESIGN =====
+
+\chapter{Methodology and Design}
+
+\section{System Architecture}
+
+The overall data flow that has been finalised
+for CPRecal is:
+\[
+\text{LeetCode} \rightarrow
+\text{Tampermonkey Extension} \rightarrow
+\text{LLM Code Analysis} \rightarrow
+\text{Extension UI} \rightarrow
+\text{CPRecal Backend} \rightarrow
+\text{MongoDB} \rightarrow
+\text{Problem/Pattern Mastery + FSRS}
+\rightarrow \text{React Frontend}
+\]
+
+\subsection{High-Level Design}
+
+The end-to-end solving flow that has been
+designed and agreed upon is as follows:
+\begin{enumerate}
+  \item The user opens a LeetCode problem;
+    the extension identifies the problem ID,
+    title, titleSlug, difficulty, and
+    tags/patterns.
+  \item The extension tracks the solving
+    session and the total time taken, and
+    monitors submission status/history as the
+    user attempts the problem.
+  \item On an Accepted submission, the
+    extension captures the accepted code,
+    language, runtime, memory, submission ID,
+    and timestamp.
+  \item The accepted code and question name
+    are sent to an LLM, which returns the
+    user's actual time/space complexity, the
+    optimal time/space complexity, and an
+    explanation.
+  \item The extension computes a
+    \emph{Solution Efficiency} score from the
+    actual-versus-optimal complexity and
+    displays it, along with the rest of the
+    solving data, in a floating widget. The
+    user may additionally record hints used.
+  \item The extension packages the raw
+    solving data and the LLM analysis and
+    submits it to the authenticated CPRecal
+    backend.
+  \item The backend computes the final
+    Problem Mastery score, persists it along
+    with the supporting raw data, converts it
+    into an FSRS rating, and lets FSRS
+    determine the next review date, storing
+    the resulting FSRS state.
+  \item The React frontend fetches the
+    personalized dashboard, problem library,
+    pattern dashboard, and problem-detail
+    data from the backend.
+\end{enumerate}
+
+A clear responsibility split between the
+three layers has also been finalised:
+the Tampermonkey extension is a
+\emph{collector and display layer} only; the
+LLM is responsible purely for analysing code
+complexity and does not decide mastery; and
+the backend remains the single source of
+truth for authentication, persisted mastery,
+pattern aggregation, and FSRS review state.
+
+\subsection{Technical Stack}
+
+\begin{itemize}
+  \item \textbf{Framework/Language:} React
+    for the frontend~\cite{reactjs}, Node.js
+    with Express for the backend
+    API~\cite{expressjs}, and a Tampermonkey
+    user script for the browser extension
+    layer~\cite{tampermonkey}.
+  \item \textbf{Database:} MongoDB, accessed
+    through Mongoose object
+    models~\cite{mongodb, mongoose}.
+  \item \textbf{Scheduling Algorithm:} FSRS
+    (Free Spaced Repetition Scheduler) for
+    computing review intervals from mastery
+    ratings~\cite{fsrs}.
+  \item \textbf{External Integration:} An LLM
+    API for accepted-code complexity
+    analysis, invoked either directly from the
+    extension or, if security/reliability
+    considerations require it, relayed through
+    the backend.
+\end{itemize}
+
+\section{Design Completed So Far}
+
+\subsection{Repository and Module Structure}
+
+A monorepo layout has been finalised to keep
+the React client, Express server, shared
+contracts, and Tampermonkey extension
+separated while remaining easy to scale:
+\texttt{client/} (pages, components,
+services, hooks), \texttt{server/} (models,
+controllers, routes, middleware, and a
+\texttt{services/} layer further split into
+\texttt{mastery/}, \texttt{fsrs/},
+\texttt{llm/}, and \texttt{ingestion/}
+sub-modules), \texttt{extension/}
+(collectors, GraphQL queries, analysis,
+widget UI, and storage), \texttt{shared/}
+(constants, schemas, types), plus top-level
+\texttt{scripts/}, \texttt{tests/}, and
+\texttt{docs/} directories. Folder-level
+responsibilities -- for example, that
+\texttt{server/models} holds only Mongoose
+persistence definitions while
+\texttt{server/controllers} handles only
+HTTP-level request/response logic -- have
+been written down so that implementation
+work can proceed consistently across the
+team.
+
+\subsection{Data Model}
+
+The database design distinguishes shared,
+global data from user-specific data. A single
+shared \texttt{Problem} collection stores
+\texttt{problemId}, title, \texttt{titleSlug},
+difficulty, and patterns/tags. All
+user-specific activity is represented through
+separate collections --
+\texttt{SolvingSession}, \texttt{Submission},
+\texttt{AcceptedSolution},
+\texttt{ProblemMastery},
+\texttt{PatternMastery}, \texttt{FSRSState},
+and \texttt{ReviewHistory} -- each referencing
+a \texttt{userId}. Raw observations (sessions,
+submissions, accepted code) are retained
+rather than discarded, so that mastery can be
+recalculated later if the scoring formula
+changes.
+
+\subsection{Problem Mastery Formula}
+
+Problem mastery answers ``how well did this
+specific user perform on this specific
+problem?'' and has been assigned the
+following weights:
+\begin{itemize}
+  \item Solution Efficiency -- 25\%
+  \item Time Complexity -- 25\%
+  \item Number of Submissions -- 20\%
+  \item Time Taken (benchmarked against
+    problem difficulty) -- 15\%
+  \item Hints Used -- 15\%
+\end{itemize}
+The exact normalisation inside each component
+is left open for tuning during
+implementation, but the relative weighting
+has been fixed.
+
+\subsection{Problem Mastery vs. Pattern Mastery}
+
+A clear conceptual separation has been made
+between problem mastery (one user's score for
+one problem) and pattern mastery (that user's
+cumulative score for a DSA pattern, computed
+from their performance across all problems
+tagged with that pattern). Because a problem
+can carry multiple pattern tags, the Problem
+Details view is specified to show, for each
+pattern, the user's cumulative pattern
+mastery rather than the problem's own score --
+keeping the two metrics visually and
+conceptually distinct.
+
+\subsection{FSRS Integration}
+
+A mapping from the 0--100 Problem Mastery
+score to the four FSRS review ratings has
+been finalised:
+\begin{itemize}
+  \item 0--39 mastery $\rightarrow$ rating 1
+  \item 40--59 mastery $\rightarrow$ rating 2
+  \item 60--79 mastery $\rightarrow$ rating 3
+  \item 80--100 mastery $\rightarrow$ rating 4
+\end{itemize}
+This rating, combined with the user's
+existing FSRS review state and history, is
+what FSRS~\cite{fsrs} uses to compute the
+next review date. Due items are designed to
+surface on the Home Dashboard's revision
+flow.
+
+\subsection{Frontend Views Specified}
+
+The required frontend surfaces have been
+specified in detail:
+\begin{itemize}
+  \item \textbf{Home Dashboard:} total solved
+    problems, problems due today, patterns
+    attempted, and a ``Today's Revision''
+    list showing problem name, tags/patterns,
+    cumulative pattern mastery, and a
+    done/not-done review status.
+  \item \textbf{Problem Library:} the full
+    problem set with search and filters (e.g.
+    pattern, status), keeping global problem
+    data separate from user-specific solved
+    status/mastery.
+  \item \textbf{Pattern Dashboard:} a user's
+    cumulative mastery broken down by DSA
+    pattern, to highlight strong and weak
+    areas.
+  \item \textbf{Problem Details:} problem
+    metadata, the user's individual problem
+    mastery, solving statistics (time taken,
+    submission count, runtime, memory), and
+    per-pattern cumulative mastery shown on
+    hover.
+\end{itemize}
+
+\subsection{Extension Widget Specification}
+
+The floating in-page widget shown on LeetCode
+has been specified to display: Problem,
+Difficulty, tags, Time Taken, Submissions
+Until Success, Runtime, Memory, Efficiency
+Score, Your Complexity, Optimal Complexity,
+Space, Hints Used, a ``Submit to CPRecal''
+action, and an ``Open CPRecal Dashboard''
+link. A visual mock-up of this widget has
+been reviewed by the team as a reference for
+implementation.
+
+\subsection{Authentication and Data Isolation}
+
+CPRecal is designed as a standard
+authenticated application in which every
+user-specific record (\texttt{SolvingSession},
+\texttt{Submission}, \texttt{AcceptedSolution},
+\texttt{ProblemMastery},
+\texttt{PatternMastery}, \texttt{FSRSState},
+\texttt{ReviewHistory}) must belong to exactly
+one CPRecal user, while shared problem
+metadata remains global. It has been
+explicitly decided that backend-side
+authorization -- not the frontend or the
+extension -- must determine the authenticated
+user for every private read or write, so that
+one user can never access another user's
+solving data.
+
+% ===== CHAPTER 3: RESULTS & EVALUATION =====
+
+\chapter{Results and Evaluation}
+
+\section{Current Status}
+
+At this stage of the project, the work
+completed is the requirements analysis and
+system design described in Chapter~2: the
+end-to-end data flow, the repository
+structure, the database schema, the Problem
+Mastery and Pattern Mastery formulas, the
+FSRS rating mapping, and the specification of
+every frontend view and the extension widget.
+These have been documented as stable
+references (\texttt{ARCHITECTURE.md} and
+\texttt{PROJECT\_CONTEXT.md}) so that
+implementation can proceed consistently
+across the team and be handed off to, or
+picked up by, any contributor without
+ambiguity.
+
+\section{Design Verification}
+
+Since implementation and formal testing have
+not yet begun, verification at this stage has
+consisted of walking through the 17-step
+solving flow (Section~2.1.1) end-to-end on
+paper to confirm that every raw data point
+needed by the Problem Mastery formula, the
+Pattern Mastery aggregation, and the FSRS
+rating conversion is in fact collected
+somewhere upstream, and that the
+responsibility split between the extension,
+the LLM, and the backend leaves no step
+without an owner. This walkthrough did not
+surface any missing data dependency in the
+current design.
+
+\section{Pending Work}
+
+Coding of the individual modules (extension
+collectors, backend controllers/services, and
+the React frontend), along with unit,
+integration, and performance testing, has not
+yet started and will follow directly from the
+design finalised in Chapter~2.
+
+% ===== CHAPTER 4: CONCLUSION =====
+
+\chapter{Conclusion}
+
+\section{Summary of Work}
+
+At this stage, the CPRecal project has moved
+from an initial idea to a fully specified
+system design. The three objectives set out
+in Section~1.2 -- automated data capture,
+LLM-based complexity analysis feeding into a
+weighted mastery score, and FSRS-driven
+spaced revision -- have each been translated
+into a concrete, documented design: a
+monorepo structure, a MongoDB schema
+separating shared and user-specific data, an
+explicit Problem Mastery formula, a clear
+Problem-Mastery-versus-Pattern-Mastery
+distinction, an FSRS rating mapping, and a
+full specification of every frontend view and
+the extension widget.
+
+\section{Key Findings}
+
+\begin{itemize}
+  \item \textbf{Finding 1:} Separating
+    \emph{problem} mastery from \emph{pattern}
+    mastery early in the design avoids
+    conflating a single lucky/unlucky attempt
+    with a user's broader command of a DSA
+    pattern, and this distinction has been
+    threaded consistently through the
+    database schema, the mastery formulas, and
+    every frontend view.
+  \item \textbf{Finding 2:} Keeping the
+    Tampermonkey extension a pure
+    collector/display layer, with the backend
+    as the sole source of truth for mastery
+    and review state, keeps the architecture
+    flexible -- for instance, the LLM call can
+    be moved from the extension to the backend
+    later (for API-key or reliability reasons)
+    without changing how mastery or FSRS
+    scheduling work.
+  \item \textbf{Finding 3:} Retaining raw
+    observations (sessions, submissions,
+    accepted code) rather than only the
+    derived mastery score means the scoring
+    formula can be revised later and applied
+    retroactively, which was an important
+    design decision made before any
+    implementation began.
+\end{itemize}
+
+\section{Future Work and Recommendations}
+
+\begin{enumerate}
+  \item Implement the Tampermonkey collectors
+    and the extension widget per the
+    specification in Section~2.2.6.
+  \item Implement the backend models,
+    controllers, and the
+    mastery/FSRS/ingestion services per the
+    module structure in Section~2.2.1.
+  \item Implement the React dashboard,
+    problem library, pattern dashboard, and
+    problem-details pages per
+    Section~2.2.5~\cite{reactjs}.
+  \item Finalise the exact normalisation
+    formulas within each Problem Mastery
+    component (Section~2.2.3).
+  \item Begin unit and integration testing
+    once the above modules are implemented.
+\end{enumerate}
+
+\section{Final Remarks}
+
+The design phase reported here was necessary
+before writing implementation code, since it
+fixes the data contracts between the
+extension, the LLM, and the backend, and
+avoids rework once coding begins. The next
+report will cover the implementation
+undertaken against this design.
+
+% ===== BIBLIOGRAPHY =====
+
+% Print bibliography with heading in TOC
+\printbibliography[heading=bibintoc]
+
+\end{document}
