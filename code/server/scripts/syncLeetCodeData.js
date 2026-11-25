@@ -4,12 +4,17 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import Problem from "../src/models/Problem.js";
+import problemRepo from "../src/repositories/problemRepo.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Load env variables
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
+
+const args = process.argv.slice(2);
+const isDynamoOnly = args.includes("--dynamo-only");
+const isDynamo = args.includes("--dynamo") || args.includes("--both") || isDynamoOnly;
 
 const LEETCODE_GRAPHQL_URL = "https://leetcode.com/graphql";
 
@@ -116,42 +121,49 @@ async function syncProblems() {
       const questions = result.questions;
       if (!questions || questions.length === 0) break;
 
-      const bulkOps = questions.map(q => {
-        // Map tags to our patterns
+      const parsedQuestions = questions.map(q => {
         const mappedPatterns = new Set();
         if (q.topicTags) {
           q.topicTags.forEach(tag => {
             if (patternMapping[tag.slug]) {
               mappedPatterns.add(patternMapping[tag.slug]);
             } else {
-              // If no specific mapping, just use the tag name to avoid losing data
               mappedPatterns.add(tag.name);
             }
           });
         }
 
         return {
-          updateOne: {
-            filter: { leetcodeId: parseInt(q.frontendQuestionId) },
-            update: {
-              $set: {
-                leetcodeId: parseInt(q.frontendQuestionId),
-                title: q.title,
-                titleSlug: q.titleSlug,
-                difficulty: q.difficulty,
-                patterns: Array.from(mappedPatterns)
-              }
-            },
-            upsert: true
-          }
+          leetcodeId: parseInt(q.frontendQuestionId, 10),
+          title: q.title,
+          titleSlug: q.titleSlug,
+          difficulty: q.difficulty,
+          patterns: Array.from(mappedPatterns),
         };
       });
 
-      if (bulkOps.length > 0) {
-        const bulkResult = await Problem.bulkWrite(bulkOps);
-        totalSynced += bulkOps.length;
-        console.log(`Upserted ${bulkOps.length} problems. Total synced: ${totalSynced}`);
+      // 1. Sync to MongoDB (if not dynamo-only)
+      if (!isDynamoOnly) {
+        const bulkOps = parsedQuestions.map(p => ({
+          updateOne: {
+            filter: { leetcodeId: p.leetcodeId },
+            update: { $set: p },
+            upsert: true,
+          },
+        }));
+
+        if (bulkOps.length > 0) {
+          await Problem.bulkWrite(bulkOps);
+        }
       }
+
+      // 2. Sync to DynamoDB (if dynamo or dual sync)
+      if (isDynamo || isDynamoOnly) {
+        await problemRepo.bulkUpsertProblems(parsedQuestions);
+      }
+
+      totalSynced += parsedQuestions.length;
+      console.log(`Upserted ${parsedQuestions.length} problems. Total synced: ${totalSynced}`);
 
       skip += limit;
       

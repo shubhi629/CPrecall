@@ -1,4 +1,4 @@
-import express from "express";
+﻿import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import authRoutes from "./routes/authRoutes.js";
@@ -9,12 +9,14 @@ import reviewRoutes from "./routes/reviewRoutes.js";
 import ingestionRoutes from "./routes/ingestionRoutes.js";
 import analyzeRoutes from "./routes/analyzeRoutes.js";
 import recommendationRoutes from "./routes/recommendationRoutes.js";
+import progressRoutes from "./routes/progressRoutes.js";
 
 const app = express();
 
 // Enable CORS for client origin + Tampermonkey extension (runs on leetcode.com)
 const allowedOrigins = [
   process.env.CLIENT_URL || "http://localhost:5173",
+  "https://cprecall.vercel.app",
   "https://leetcode.com",
   "https://www.leetcode.com",
 ];
@@ -65,6 +67,9 @@ app.use("/api/ingestion", ingestionRoutes);
 // Recommendations Routes
 app.use("/api/recommendations", recommendationRoutes);
 
+// Progress Reset & Completion Routes
+app.use("/api/progress", progressRoutes);
+
 // LLM Code Analysis (Extension calls this to analyze accepted code)
 app.use("/api/analyze", analyzeRoutes);
 
@@ -76,6 +81,19 @@ app.use("*", (req, res) => {
 // Centralized Error Handling Middleware
 app.use((err, req, res, next) => {
   console.error("[Error]", err);
+
+  // Handle DynamoDB duplicate/conditional check failure or explicit 409
+  if (
+    err.status === 409 ||
+    err.statusCode === 409 ||
+    err.name === "TransactionCanceledException" ||
+    err.name === "ConditionalCheckFailedException" ||
+    err.CancellationReasons?.some((r) => r.Code === "ConditionalCheckFailed")
+  ) {
+    return res.status(409).json({
+      message: err.message || "An account with this email already exists.",
+    });
+  }
 
   // Handle Mongoose duplicate key error
   if (err.code === 11000) {
@@ -91,10 +109,11 @@ app.use((err, req, res, next) => {
     return res.status(400).json({ message: messages.join(", ") });
   }
 
-  const statusCode = err.statusCode || 500;
+  const statusCode = err.statusCode || err.status || 500;
   return res.status(statusCode).json({
     message: err.message || "Internal Server Error",
   });
 });
 
 export default app;
+

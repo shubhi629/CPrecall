@@ -122,7 +122,7 @@ Return ONLY a valid JSON object with EXACTLY this structure:
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const interaction = await ai.interactions.create({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.0-flash",
       input: prompt,
     });
 

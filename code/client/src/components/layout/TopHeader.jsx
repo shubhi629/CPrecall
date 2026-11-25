@@ -1,6 +1,7 @@
 import React from 'react';
 import { useLocation, Link, useNavigate } from 'react-router-dom';
-import { Menu, Target, Search } from 'lucide-react';
+import { Menu, Target, Search, Key, Check } from 'lucide-react';
+import { useState } from 'react';
 import ThemeSwitcher from '../common/ThemeSwitcher';
 import { useAuth } from '../../context/AuthContext';
 import { getUserInitials } from '../../utils/userDisplay';
@@ -8,7 +9,19 @@ import { getUserInitials } from '../../utils/userDisplay';
 export default function TopHeader({ onMobileMenuToggle, dueCount = 0 }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, token } = useAuth();
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyKey = () => {
+    const activeToken = token || localStorage.getItem('cprecall_token');
+    if (!activeToken) {
+      alert('Please log out and log back in to generate your extension sync key!');
+      return;
+    }
+    navigator.clipboard.writeText(activeToken);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
 
   const getBreadcrumb = () => {
     if (location.pathname === '/') return 'Command Center';
@@ -72,6 +85,26 @@ export default function TopHeader({ onMobileMenuToggle, dueCount = 0 }) {
         </button>
 
         <ThemeSwitcher />
+
+        {user && (
+          <button
+            onClick={handleCopyKey}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition-all cursor-pointer shadow-xs"
+            title="Click to copy your extension sync token for Tampermonkey"
+          >
+            {copied ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden sm:inline">Key Copied!</span>
+              </>
+            ) : (
+              <>
+                <Key className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden sm:inline">Extension Key</span>
+              </>
+            )}
+          </button>
+        )}
 
         {user && (
           <div className="flex items-center gap-2 pl-2 border-l border-[var(--border-subtle)] ml-1">

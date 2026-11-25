@@ -7,9 +7,22 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "test": "node verify_library_recall.js"
+    "test": "node verify_library_recall.js",
+    "db:install": "node scripts/installDynamoLocal.js",
+    "db:local": "java -Djava.library.path=./bin/dynamodb/DynamoDBLocal_lib -jar ./bin/dynamodb/DynamoDBLocal.jar -sharedDb -dbPath ./dynamo-data -port 8000",
+    "db:init": "node scripts/initLocalDynamo.js",
+    "db:verify": "node scripts/verifyPhase1.js",
+    "db:test": "node scripts/testAllRepositories.js",
+    "test:phase3": "node scripts/testPhase3Integration.js",
+    "db:migrate": "node scripts/migrateMongoToDynamo.js",
+    "db:reconcile": "node scripts/reconcileDatabases.js",
+    "db:reverse-sync": "node scripts/reverseSyncDynamoToMongo.js",
+    "test:phase5": "node scripts/testPhase5Cutover.js",
+    "test:cloud-db": "node scripts/verifyCloudDatabaseIntegrity.js"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1156.0",
+    "@aws-sdk/lib-dynamodb": "^3.1156.0",
     "@google/genai": "^2.17.1",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",
@@ -17,7 +30,8 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.9.5"
+    "mongoose": "^8.9.5",
+    "uuid": "^14.0.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"

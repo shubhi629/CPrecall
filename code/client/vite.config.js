@@ -10,6 +10,7 @@ export default defineConfig({
   ],
   server: {
     port: 5173,
+    // Local dev proxy: forwards /api calls to the Express backend on port 5000
     proxy: {
       '/api': {
         target: 'http://localhost:5000',

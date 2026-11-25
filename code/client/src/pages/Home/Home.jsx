@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useOutletContext } from 'react-router-dom';
 import { 
   CheckCircle2, 
   Circle,
@@ -29,6 +29,7 @@ import LoadingState from '../../components/common/LoadingState';
 import EmptyState from '../../components/common/EmptyState';
 
 export default function Home() {
+  const { openResetModal } = useOutletContext() || {};
   const [dashboardData, setDashboardData] = useState(null);
   const [recommendations, setRecommendations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -161,6 +162,37 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {/* ── Library Completion Celebration & Reset Trigger ── */}
+      {stats.isLibraryCompleted && (
+        <div className="panel-card p-5 sm:p-6 bg-gradient-to-r from-amber-500/10 via-[var(--bg-surface)] to-emerald-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-md animate-fade-in">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-500 flex items-center justify-center font-bold text-2xl border border-amber-500/40 shadow-sm flex-shrink-0">
+              🏆
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base font-bold text-[var(--text-primary)]">
+                  Entire Question Library Completed!
+                </h3>
+                <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  {stats.totalSolved} / {stats.totalProblems} Questions
+                </span>
+              </div>
+              <p className="text-xs text-[var(--text-secondary)] mt-1">
+                Congratulations! You have mastered every algorithm in the library. You can reset your progress anytime to start a new learning cycle.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => openResetModal?.()}
+            className="btn-primary py-2.5 px-4 text-xs font-semibold whitespace-nowrap self-start sm:self-auto shadow-sm hover:shadow-[var(--brand-glow)]"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Reset Progress</span>
+          </button>
+        </div>
+      )}
 
       {/* ── Primary KPI Bento Stats Grid ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

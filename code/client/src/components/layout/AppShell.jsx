@@ -1,17 +1,35 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import TopHeader from './TopHeader';
 import MobileDrawer from './MobileDrawer';
 import { useApi } from '../../hooks/useApi';
 import api from '../../services/api';
+import LibraryCompletionModal from '../common/LibraryCompletionModal';
 
 export default function AppShell() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { data: dashboardData } = useApi(api.getDashboard, [], true);
+  const { data: statsData, execute: refreshStats } = useApi(api.getDashboardStats, [], true);
+  const [isCompletionModalOpen, setIsCompletionModalOpen] = useState(false);
 
-  const dueCount = dashboardData?.todaysRevision?.length || dashboardData?.todaysRecallRecommendations?.length || 0;
+  useEffect(() => {
+    if (statsData?.isLibraryCompleted && !statsData?.completionPromptDismissed) {
+      setIsCompletionModalOpen(true);
+    }
+  }, [statsData?.isLibraryCompleted, statsData?.completionPromptDismissed]);
+
+  const handleResetComplete = () => {
+    setIsCompletionModalOpen(false);
+    window.location.reload();
+  };
+
+  const handleDismiss = () => {
+    setIsCompletionModalOpen(false);
+    refreshStats().catch(() => {});
+  };
+
+  const dueCount = statsData?.reviewDue ?? statsData?.todaysRevision?.length ?? 0;
 
   return (
     <div className="min-h-screen bg-[var(--bg-base)] text-[var(--text-primary)] flex flex-col relative overflow-x-hidden selection:bg-[var(--brand-primary)] selection:text-white">
@@ -47,9 +65,16 @@ export default function AppShell() {
           dueCount={dueCount}
         />
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto animate-fade-in">
-          <Outlet />
+          <Outlet context={{ statsData, refreshStats, openResetModal: () => setIsCompletionModalOpen(true) }} />
         </main>
       </div>
+
+      {/* ── Question Library Completion & Progress Reset Modal ── */}
+      <LibraryCompletionModal
+        isOpen={isCompletionModalOpen}
+        onClose={handleDismiss}
+        onResetComplete={handleResetComplete}
+      />
     </div>
   );
 }

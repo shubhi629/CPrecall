@@ -6,6 +6,11 @@ import {
   getWeakPatterns,
   getStrongPatterns,
 } from "../services/mastery/patternMastery.js";
+import { isDynamoDB } from "../config/dbBackend.js";
+import patternMasteryRepo from "../repositories/patternMasteryRepo.js";
+import problemRepo from "../repositories/problemRepo.js";
+import problemMasteryRepo from "../repositories/problemMasteryRepo.js";
+import fsrsStateRepo from "../repositories/fsrsStateRepo.js";
 
 /**
  * GET /api/patterns
@@ -15,20 +20,66 @@ export const getPatterns = async (req, res, next) => {
   try {
     const userId = req.user.userId;
 
-    // Get all pattern masteries for user
-    const patterns = await PatternMastery.find({ userId }).sort({
-      mastery: -1,
-    }).lean();
-
-    // Get all scheduled problems in FSRS
-    const allScheduled = await FSRSState.find({ userId })
-      .populate("problemId", "patterns")
-      .lean();
-
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
+
+    if (isDynamoDB()) {
+      const [patterns, dueReviews, futureReviews] = await Promise.all([
+        patternMasteryRepo.getUserPatternMasteries(userId),
+        fsrsStateRepo.getDueReviews(userId, tomorrow.toISOString()),
+        fsrsStateRepo.getFutureScheduledReviews(userId, tomorrow.toISOString()),
+      ]);
+
+      const allReviews = [...(dueReviews || []), ...(futureReviews || [])];
+      const reviewProblemIds = allReviews.map((r) => r.problemId);
+      const problemsMeta = await problemRepo.batchGetProblems(reviewProblemIds);
+      const problemMap = new Map(problemsMeta.map((p) => [(p.problemId || p._id).toString(), p]));
+
+      const duePatternSet = new Set();
+      const earliestReviewByPattern = {};
+
+      allReviews.forEach((state) => {
+        const prob = problemMap.get(state.problemId.toString());
+        if (prob && prob.patterns && state.nextReviewDate) {
+          const reviewDate = new Date(state.nextReviewDate);
+          const isDue = reviewDate < tomorrow;
+
+          prob.patterns.forEach((pat) => {
+            if (isDue) {
+              duePatternSet.add(pat);
+            }
+            if (!earliestReviewByPattern[pat] || reviewDate < earliestReviewByPattern[pat]) {
+              earliestReviewByPattern[pat] = reviewDate;
+            }
+          });
+        }
+      });
+
+      const patternsWithRecall = (patterns || []).map((p) => ({
+        ...p,
+        recallDue: duePatternSet.has(p.pattern),
+        nextReviewDate: earliestReviewByPattern[p.pattern] || null,
+      }));
+
+      const weakPatterns = [...(patterns || [])]
+        .sort((a, b) => (a.mastery ?? 0) - (b.mastery ?? 0))
+        .slice(0, 3);
+      const strongPatterns = (patterns || []).slice(0, 3);
+
+      return res.status(200).json({
+        patterns: patternsWithRecall,
+        weakPatterns,
+        strongPatterns,
+      });
+    }
+
+    // MongoDB mode: Get all pattern masteries and scheduled problems in parallel
+    const [patterns, allScheduled] = await Promise.all([
+      PatternMastery.find({ userId }).sort({ mastery: -1 }).lean(),
+      FSRSState.find({ userId }).populate("problemId", "patterns").lean(),
+    ]);
 
     const duePatternSet = new Set();
     const earliestReviewByPattern = {};
@@ -82,6 +133,47 @@ export const getPattern = async (req, res, next) => {
 
     // Decode URL-encoded pattern name
     const decodedPattern = decodeURIComponent(patternName);
+
+    if (isDynamoDB()) {
+      const patternMastery = await patternMasteryRepo.getPatternMastery(userId, decodedPattern);
+      if (!patternMastery) {
+        return res
+          .status(404)
+          .json({ message: "Pattern not found for this user" });
+      }
+
+      const problems = await problemRepo.getProblemsByPattern(decodedPattern);
+      const problemIds = problems.map((p) => (p.problemId || p._id).toString());
+      const masteries = await problemMasteryRepo.batchGetProblemMasteries(userId, problemIds);
+
+      const masteriesByProblemId = {};
+      masteries.forEach((m) => {
+        masteriesByProblemId[m.problemId.toString()] = m;
+      });
+
+      const problemsWithMastery = problems.map((p) => {
+        const pIdStr = (p.problemId || p._id).toString();
+        return {
+          id: pIdStr,
+          title: p.title || p.problemTitle,
+          difficulty: p.difficulty || p.problemDifficulty,
+          patterns: p.patterns,
+          userMastery: masteriesByProblemId[pIdStr]?.mastery ?? null,
+          solved: masteriesByProblemId[pIdStr] ? true : false,
+        };
+      });
+
+      return res.status(200).json({
+        pattern: {
+          name: decodedPattern,
+          mastery: patternMastery.mastery,
+          masteryBreakdown: patternMastery.components,
+          totalProblemsAttempted: patternMastery.totalProblemsAttempted,
+          totalProblemsSolved: patternMastery.totalProblemsSolved,
+        },
+        problems: problemsWithMastery,
+      });
+    }
 
     // Get pattern mastery for user
     const patternMastery = await PatternMastery.findOne({

@@ -1,5 +1,7 @@
 import Problem from "../models/Problem.js";
 import { analyzeCodeComplexity } from "../services/llm/codeAnalysis.js";
+import { isDynamoDB } from "../config/dbBackend.js";
+import problemRepo from "../repositories/problemRepo.js";
 
 /**
  * Fetch description HTML from LeetCode GraphQL API with timeout and error resilience.
@@ -70,23 +72,40 @@ export const analyzeCode = async (req, res, next) => {
 
     // 1. Identify and lookup problem in DB
     const slug = (titleSlug || problemTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-")).replace(/^-|-$/g, "");
-    let problem = await Problem.findOne({
-      $or: [
-        { titleSlug: slug },
-        { title: problemTitle },
-      ],
-    });
+    let problem;
 
-    // 2. Lazy load description if missing
-    if (problem && !problem.description) {
-      try {
-        const fetchedDesc = await fetchLeetCodeDescription(problem.titleSlug || slug);
-        if (fetchedDesc) {
-          problem.description = fetchedDesc;
-          await problem.save();
+    if (isDynamoDB()) {
+      problem = await problemRepo.getProblemByTitleOrSlug(problemTitle, slug);
+      if (problem && !problem.description) {
+        try {
+          const fetchedDesc = await fetchLeetCodeDescription(problem.titleSlug || slug);
+          if (fetchedDesc) {
+            problem.description = fetchedDesc;
+            await problemRepo.createOrUpdateProblem(problem);
+          }
+        } catch (e) {
+          console.warn("[Analyze] Error updating cached description:", e.message);
         }
-      } catch (e) {
-        console.warn("[Analyze] Error updating cached description:", e.message);
+      }
+    } else {
+      problem = await Problem.findOne({
+        $or: [
+          { titleSlug: slug },
+          { title: problemTitle },
+        ],
+      });
+
+      // 2. Lazy load description if missing
+      if (problem && !problem.description) {
+        try {
+          const fetchedDesc = await fetchLeetCodeDescription(problem.titleSlug || slug);
+          if (fetchedDesc) {
+            problem.description = fetchedDesc;
+            await problem.save();
+          }
+        } catch (e) {
+          console.warn("[Analyze] Error updating cached description:", e.message);
+        }
       }
     }
 

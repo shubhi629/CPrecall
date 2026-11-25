@@ -5,6 +5,12 @@ import PatternMastery from "../models/PatternMastery.js";
 import AcceptedSolution from "../models/AcceptedSolution.js";
 import FSRSState from "../models/FSRSState.js";
 import { selectRecallTargets } from "../services/fsrs/recallSelector.js";
+import { isDynamoDB } from "../config/dbBackend.js";
+import problemRepo from "../repositories/problemRepo.js";
+import problemMasteryRepo from "../repositories/problemMasteryRepo.js";
+import patternMasteryRepo from "../repositories/patternMasteryRepo.js";
+import acceptedSolutionRepo from "../repositories/acceptedSolutionRepo.js";
+import fsrsStateRepo from "../repositories/fsrsStateRepo.js";
 
 /**
  * GET /api/problems
@@ -24,6 +30,132 @@ export const getProblems = async (req, res, next) => {
     } = req.query;
     const userId = req.user.userId;
 
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    if (isDynamoDB()) {
+      let isRecallMode = false;
+      let recallResolvedTargets = [];
+      let solvedProblemIds = [];
+      let recallProblemIds = [];
+
+      // Get user's solved problems
+      const solvedList = await problemMasteryRepo.getUserSolvedProblems(userId);
+      solvedProblemIds = solvedList.map((s) => s.problemId.toString());
+
+      if (status === "recall") {
+        isRecallMode = true;
+        const dueToday = await fsrsStateRepo.getDueReviews(userId, tomorrow.toISOString());
+        const dueProblemIds = dueToday.map((d) => d.problemId);
+        const problemsMeta = await problemRepo.batchGetProblems(dueProblemIds);
+        const probMap = new Map(problemsMeta.map((p) => [(p.problemId || p._id).toString(), p]));
+        const populatedDue = dueToday.map((d) => ({
+          ...d,
+          problemId: probMap.get(d.problemId.toString()) || { _id: d.problemId, problemId: d.problemId, patterns: [] },
+        }));
+
+        recallResolvedTargets = await selectRecallTargets(populatedDue, userId);
+        recallProblemIds = recallResolvedTargets.map((target) => (target.problem._id || target.problem.problemId || target.problem.id).toString());
+      } else if (status === "scheduled") {
+        isRecallMode = true;
+        const futureScheduled = await fsrsStateRepo.getFutureScheduledReviews(userId, tomorrow.toISOString());
+        const schedProblemIds = futureScheduled.map((d) => d.problemId);
+        const problemsMeta = await problemRepo.batchGetProblems(schedProblemIds);
+        const probMap = new Map(problemsMeta.map((p) => [(p.problemId || p._id).toString(), p]));
+        const populatedScheduled = futureScheduled.map((d) => ({
+          ...d,
+          problemId: probMap.get(d.problemId.toString()) || { _id: d.problemId, problemId: d.problemId, patterns: [] },
+        }));
+
+        recallResolvedTargets = await selectRecallTargets(populatedScheduled, userId);
+        recallProblemIds = recallResolvedTargets.map((target) => (target.problem._id || target.problem.problemId || target.problem.id).toString());
+      }
+
+      const paginatedResult = await problemRepo.getProblemsPaginated({
+        difficulty,
+        pattern,
+        status,
+        search,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        solvedProblemIds,
+        recallProblemIds,
+      });
+
+      const pageProblemIds = paginatedResult.problems.map((p) => (p.problemId || p._id).toString());
+      const [masteries, fsrsStates] = await Promise.all([
+        problemMasteryRepo.batchGetProblemMasteries(userId, pageProblemIds),
+        fsrsStateRepo.batchGetFSRSStates(userId, pageProblemIds),
+      ]);
+
+      const masteriesByProblemId = {};
+      masteries.forEach((m) => {
+        masteriesByProblemId[m.problemId.toString()] = m;
+      });
+
+      const fsrsByProblemId = {};
+      fsrsStates.forEach((f) => {
+        fsrsByProblemId[f.problemId.toString()] = f;
+      });
+
+      const recallTargetLookup = {};
+      if (isRecallMode) {
+        recallResolvedTargets.forEach((target) => {
+          const targetId = (target.problem._id || target.problem.problemId || target.problem.id).toString();
+          recallTargetLookup[targetId] = target;
+        });
+      }
+
+      const combined = paginatedResult.problems.map((p) => {
+        let isReviewDue = false;
+        let nextRevDate = null;
+        let originalDueId = null;
+
+        const pIdStr = (p.problemId || p._id).toString();
+        if (isRecallMode && recallTargetLookup[pIdStr]) {
+          const targetInfo = recallTargetLookup[pIdStr];
+          originalDueId = targetInfo.originalDueProblemId;
+          nextRevDate = targetInfo.nextReviewDate || null;
+          isReviewDue = nextRevDate ? new Date(nextRevDate) < tomorrow : false;
+        } else {
+          isReviewDue = fsrsByProblemId[pIdStr] && new Date(fsrsByProblemId[pIdStr].nextReviewDate) < tomorrow;
+          nextRevDate = fsrsByProblemId[pIdStr]?.nextReviewDate || null;
+        }
+
+        return {
+          id: p.problemId || p._id,
+          leetcodeId: p.leetcodeId,
+          title: p.title,
+          titleSlug: p.titleSlug,
+          difficulty: p.difficulty,
+          patterns: p.patterns,
+          userState: masteriesByProblemId[pIdStr]
+            ? {
+                solved: true,
+                mastery: masteriesByProblemId[pIdStr].mastery,
+                reviewDue: isReviewDue,
+                nextReviewDate: nextRevDate,
+              }
+            : {
+                solved: false,
+                mastery: null,
+                reviewDue: isReviewDue,
+                nextReviewDate: nextRevDate,
+              },
+          ...(originalDueId && { originalDueProblemId: originalDueId }),
+        };
+      });
+
+      return res.status(200).json({
+        problems: combined,
+        total: paginatedResult.total,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+      });
+    }
+
     // Build filter
     let filter = {};
     if (difficulty) filter.difficulty = difficulty;
@@ -40,11 +172,6 @@ export const getProblems = async (req, res, next) => {
         filter.title = { $regex: search, $options: "i" };
       }
     }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
 
     // Apply status filter directly to DB query for accurate pagination & instant display
     // EXCEPT for 'recall', which requires a complex secondary lookup. We'll handle 'recall' separately.
@@ -196,6 +323,82 @@ export const getProblem = async (req, res, next) => {
     const { id } = req.params;
     const userId = req.user.userId;
 
+    if (isDynamoDB()) {
+      if (!id || typeof id !== "string") {
+        return res.status(400).json({ message: "Invalid problem ID" });
+      }
+
+      const problem = await problemRepo.getProblemById(id);
+      if (!problem) {
+        return res.status(404).json({ message: "Problem not found" });
+      }
+
+      const [mastery, acceptedSolution, fsrsState] = await Promise.all([
+        problemMasteryRepo.getProblemMastery(userId, id),
+        acceptedSolutionRepo.getAcceptedSolution(userId, id),
+        fsrsStateRepo.getFSRSState(userId, id),
+      ]);
+
+      const patternsWithMastery = await Promise.all(
+        (problem.patterns || []).map(async (patternName) => {
+          const patternMastery = await patternMasteryRepo.getPatternMastery(userId, patternName);
+          return {
+            name: patternName,
+            cumulativeMastery: patternMastery?.mastery ?? 0,
+            totalProblems: patternMastery?.totalProblemsAttempted ?? 0,
+            solvedProblems: patternMastery?.totalProblemsSolved ?? 0,
+          };
+        })
+      );
+
+      return res.status(200).json({
+        problem: {
+          id: problem.problemId || problem._id,
+          leetcodeId: problem.leetcodeId,
+          title: problem.title,
+          titleSlug: problem.titleSlug,
+          difficulty: problem.difficulty,
+          patterns: problem.patterns,
+        },
+        userState: mastery
+          ? {
+              solved: true,
+              mastery: mastery.mastery,
+              masteryBreakdown: mastery.components,
+              solvingData: {
+                timeTakenSeconds: mastery.totalTimeSeconds,
+                timeTaken: mastery.totalTimeSeconds ? `${Math.floor(mastery.totalTimeSeconds / 60)}m ${mastery.totalTimeSeconds % 60}s` : "—",
+                submissions: mastery.totalSubmissions,
+                hintsUsed: mastery.hintsUsedCount,
+                runtime: acceptedSolution?.runtime != null ? `${acceptedSolution.runtime} ms` : "—",
+                memory: acceptedSolution?.memory != null ? `${acceptedSolution.memory} MB` : "—",
+                solvedAt: mastery.solvedAt,
+              },
+              acceptedSolution: acceptedSolution
+                ? {
+                    language: acceptedSolution.language,
+                    runtime: acceptedSolution.runtime,
+                    memory: acceptedSolution.memory,
+                    code: acceptedSolution.code,
+                    analysis: acceptedSolution.analysisResult,
+                  }
+                : null,
+              fsrs: fsrsState
+                ? {
+                    rating: fsrsState.rating,
+                    nextReviewDate: fsrsState.nextReviewDate,
+                    interval: fsrsState.intervalDays,
+                    intervalDays: fsrsState.intervalDays,
+                    easeFactor: fsrsState.easeFactor ?? 2.5,
+                    reviewDue: fsrsState.nextReviewDate ? new Date(fsrsState.nextReviewDate) <= new Date() : false,
+                  }
+                : null,
+              patternsWithMastery,
+            }
+          : null,
+      });
+    }
+
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: "Invalid problem ID format" });
     }
@@ -206,39 +409,28 @@ export const getProblem = async (req, res, next) => {
       return res.status(404).json({ message: "Problem not found" });
     }
 
-    // Get user's mastery for this problem
-    const mastery = await ProblemMastery.findOne({
-      userId,
-      problemId: id,
+    // Get user's mastery, accepted solution, and FSRS state in parallel
+    const [mastery, acceptedSolution, fsrsState, patternMasteries] = await Promise.all([
+      ProblemMastery.findOne({ userId, problemId: id }),
+      AcceptedSolution.findOne({ userId, problemId: id }),
+      FSRSState.findOne({ userId, problemId: id }),
+      PatternMastery.find({ userId, pattern: { $in: problem.patterns || [] } }).lean(),
+    ]);
+
+    const patternMap = new Map();
+    (patternMasteries || []).forEach((pm) => {
+      patternMap.set(pm.pattern, pm);
     });
 
-    // Get accepted solution and analysis
-    const acceptedSolution = await AcceptedSolution.findOne({
-      userId,
-      problemId: id,
-    });
-
-    // Get FSRS state
-    const fsrsState = await FSRSState.findOne({
-      userId,
-      problemId: id,
-    });
-
-    // Get pattern masteries for each pattern on this problem
-    const patternsWithMastery = [];
-    for (const patternName of problem.patterns) {
-      const patternMastery = await PatternMastery.findOne({
-        userId,
-        pattern: patternName,
-      });
-
-      patternsWithMastery.push({
+    const patternsWithMastery = (problem.patterns || []).map((patternName) => {
+      const pm = patternMap.get(patternName);
+      return {
         name: patternName,
-        cumulativeMastery: patternMastery?.mastery ?? 0,
-        totalProblems: patternMastery?.totalProblemsAttempted ?? 0,
-        solvedProblems: patternMastery?.totalProblemsSolved ?? 0,
-      });
-    }
+        cumulativeMastery: pm?.mastery ?? 0,
+        totalProblems: pm?.totalProblemsAttempted ?? 0,
+        solvedProblems: pm?.totalProblemsSolved ?? 0,
+      };
+    });
 
     res.status(200).json({
       problem: {

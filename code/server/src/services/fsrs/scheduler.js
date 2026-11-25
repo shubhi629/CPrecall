@@ -1,5 +1,8 @@
 import FSRSState from "../../models/FSRSState.js";
 import { getMasteryRating, getInitialInterval } from "./ratingMapper.js";
+import { isDynamoDB } from "../../config/dbBackend.js";
+import fsrsStateRepo from "../../repositories/fsrsStateRepo.js";
+import problemRepo from "../../repositories/problemRepo.js";
 
 /**
  * Create or update FSRS state for a problem
@@ -7,7 +10,42 @@ import { getMasteryRating, getInitialInterval } from "./ratingMapper.js";
  */
 export async function createOrUpdateFSRSState(userId, problemId, mastery) {
   const rating = getMasteryRating(mastery);
-  
+
+  if (isDynamoDB()) {
+    const existingState = await fsrsStateRepo.getFSRSState(userId, problemId);
+    let newIntervalDays;
+    let newEaseFactor;
+
+    if (existingState) {
+      newIntervalDays = existingState.intervalDays;
+      newEaseFactor = existingState.easeFactor || 2.5;
+
+      if (rating >= 3) {
+        newIntervalDays = Math.ceil(existingState.intervalDays * newEaseFactor);
+        newEaseFactor = Math.min(2.5, newEaseFactor + 0.1);
+      } else if (rating === 2) {
+        newIntervalDays = Math.ceil(existingState.intervalDays * 1.2);
+      } else {
+        newIntervalDays = getInitialInterval(rating);
+        newEaseFactor = Math.max(1.3, newEaseFactor - 0.2);
+      }
+    } else {
+      newIntervalDays = getInitialInterval(rating);
+      newEaseFactor = 2.5;
+    }
+
+    const nextReviewDate = new Date();
+    nextReviewDate.setDate(nextReviewDate.getDate() + newIntervalDays);
+
+    return fsrsStateRepo.saveFSRSState(userId, problemId, {
+      rating,
+      nextReviewDate: nextReviewDate.toISOString(),
+      intervalDays: newIntervalDays,
+      easeFactor: newEaseFactor,
+      newReview: Boolean(existingState),
+    });
+  }
+
   // Check if FSRS state already exists
   const existingState = await FSRSState.findOne({ userId, problemId });
 
@@ -71,6 +109,9 @@ export async function createOrUpdateFSRSState(userId, problemId, mastery) {
  * Get FSRS state for a problem
  */
 export async function getFSRSState(userId, problemId) {
+  if (isDynamoDB()) {
+    return fsrsStateRepo.getFSRSState(userId, problemId);
+  }
   return FSRSState.findOne({ userId, problemId });
 }
 
@@ -83,6 +124,18 @@ export async function getProblemasDueToday(userId) {
 
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
+
+  if (isDynamoDB()) {
+    const dueItems = await fsrsStateRepo.getDueReviews(userId, tomorrow.toISOString());
+    const problemIds = dueItems.map((d) => d.problemId);
+    const problems = await problemRepo.batchGetProblems(problemIds);
+    const problemMap = new Map(problems.map((p) => [p.problemId || p._id, p]));
+
+    return dueItems.map((item) => ({
+      ...item,
+      problemId: problemMap.get(item.problemId) || null,
+    }));
+  }
 
   return FSRSState.find({
     userId,
@@ -100,6 +153,18 @@ export async function getProblemsOverdue(userId) {
   const today = new Date();
   today.setHours(23, 59, 59, 999);
 
+  if (isDynamoDB()) {
+    const dueItems = await fsrsStateRepo.getDueReviews(userId, today.toISOString());
+    const problemIds = dueItems.map((d) => d.problemId);
+    const problems = await problemRepo.batchGetProblems(problemIds);
+    const problemMap = new Map(problems.map((p) => [p.problemId || p._id, p]));
+
+    return dueItems.map((item) => ({
+      ...item,
+      problemId: problemMap.get(item.problemId) || null,
+    }));
+  }
+
   return FSRSState.find({
     userId,
     nextReviewDate: { $lte: today },
@@ -111,6 +176,10 @@ export async function getProblemsOverdue(userId) {
  * Called when user completes/skips a review
  */
 export async function updateAfterReview(userId, problemId, reviewStatus) {
+  if (isDynamoDB()) {
+    return fsrsStateRepo.updateAfterReview(userId, problemId, reviewStatus);
+  }
+
   const fsrsState = await FSRSState.findOne({ userId, problemId });
 
   if (!fsrsState) {
@@ -170,6 +239,11 @@ export async function countProblemsDueToday(userId) {
 
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
+
+  if (isDynamoDB()) {
+    const due = await fsrsStateRepo.getDueReviews(userId, tomorrow.toISOString());
+    return due.length;
+  }
 
   return FSRSState.countDocuments({
     userId,

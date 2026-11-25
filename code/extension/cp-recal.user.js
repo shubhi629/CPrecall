@@ -1,13 +1,17 @@
 // ==UserScript==
 // @name         CPRecal - LeetCode Submission Tracker
 // @namespace    CPRecal
-// @version      3.0.0
+// @version      3.1.0
 // @description  Tracks LeetCode solving sessions and submits data to CPRecal backend for mastery scoring and spaced repetition.
 // @match        https://leetcode.com/problems/*
+// @match        https://www.leetcode.com/problems/*
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_xmlhttpRequest
 // @connect      localhost
-// @connect      CPRecal.api
+// @connect      cprecall-api.onrender.com
+// @connect      cprecall.vercel.app
+// @connect      *
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -17,16 +21,29 @@
   // ─────────────────────────────────────────────────────────────────────────────
   // CONFIG — Update BACKEND_URL to your deployed backend when ready
   // ─────────────────────────────────────────────────────────────────────────────
-  const BACKEND_URL = "http://localhost:5000";
+  // ── Deployment URLs ──
+  // For local dev:    http://localhost:5000 / http://localhost:5173
+  // For Render:       https://cprecall-api.onrender.com / https://cprecall.vercel.app
+  // For AWS EC2:      http://cprecall.duckdns.org (or http://3.106.181.110)
+  const BACKEND_URL = "http://cprecall.duckdns.org";
   const GRAPHQL_ENDPOINT = "https://leetcode.com/graphql/";
   const WIDGET_POS_KEY = "CPRecal_widget_pos";
-  const FRONTEND_URL = "http://localhost:5173";
+  const FRONTEND_URL = "http://cprecall.duckdns.org";
 
   // ─────────────────────────────────────────────────────────────────────────────
   // HELPERS
   // ─────────────────────────────────────────────────────────────────────────────
   function log(...args) {
     console.log("%c[CPRecal]", "color:#22c55e;font-weight:bold;", ...args);
+  }
+
+  function getAuthHeaders() {
+    const headers = { "Content-Type": "application/json" };
+    const savedToken = GM_getValue("cprecall_sync_token", null);
+    if (savedToken) {
+      headers["Authorization"] = `Bearer ${savedToken}`;
+    }
+    return headers;
   }
 
   function getTitleSlugFromUrl() {
@@ -153,25 +170,73 @@
   // ─────────────────────────────────────────────────────────────────────────────
 
   /**
+   * Universal cross-origin network requester for Tampermonkey.
+   * Uses GM_xmlhttpRequest if available to completely bypass web page CSP and cookie restrictions.
+   * Seamlessly falls back to fetch() if running in standard browser context.
+   */
+  function backendRequest(url, { method = "GET", headers = {}, body = null } = {}) {
+    return new Promise((resolve, reject) => {
+      if (typeof GM_xmlhttpRequest === "function") {
+        GM_xmlhttpRequest({
+          method,
+          url,
+          headers,
+          data: body,
+          onload: (res) => {
+            let data = {};
+            try { data = JSON.parse(res.responseText); } catch (_) { }
+            if (res.status >= 200 && res.status < 300) {
+              resolve(data);
+            } else {
+              const msg = data.message || `Request failed with status ${res.status}`;
+              const err = new Error(msg);
+              err.status = res.status;
+              reject(err);
+            }
+          },
+          onerror: () => reject(new Error("Network connection error to CPRecal backend. Please verify your internet connection.")),
+          ontimeout: () => reject(new Error("Request to CPRecal backend timed out.")),
+        });
+      } else {
+        fetch(url, {
+          method,
+          headers,
+          credentials: "include",
+          body,
+        })
+          .then(async (res) => {
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              const err = new Error(data.message || `Request failed with status ${res.status}`);
+              err.status = res.status;
+              throw err;
+            }
+            return data;
+          })
+          .then(resolve)
+          .catch(reject);
+      }
+    });
+  }
+
+  /**
    * Call the backend to analyze code complexity using Gemini LLM.
    * The API key stays server-side — never exposed in this script.
    */
   async function analyzeCodeWithBackend({ code, problemTitle, difficulty, language, titleSlug }) {
     log("Requesting LLM analysis from backend...");
 
-    const res = await fetch(`${BACKEND_URL}/api/analyze`, {
+    const savedToken = GM_getValue("cprecall_sync_token", null);
+    if (!savedToken) {
+      throw new Error("No Extension Key saved. Click the 🔑 button above or paste your key in the dashboard to connect.");
+    }
+
+    const analysis = await backendRequest(`${BACKEND_URL}/api/analyze`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include", // sends the JWT cookie automatically
+      headers: getAuthHeaders(),
       body: JSON.stringify({ code, problemTitle, difficulty, language, titleSlug }),
     });
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || `Analysis failed: ${res.status}`);
-    }
-
-    const analysis = await res.json();
     log("Analysis received:", analysis);
     return analysis;
   }
@@ -193,27 +258,26 @@
   async function submitToBackend(payload) {
     log("Submitting solving data to CPRecal backend...", payload);
 
-    const res = await fetch(`${BACKEND_URL}/api/ingestion/submission`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include", // sends JWT cookie automatically
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-
-      // Handle not-logged-in gracefully
-      if (res.status === 401) {
-        throw new Error("Not logged into CPRecal. Please login at the dashboard first.");
-      }
-
-      throw new Error(err.message || `Submission failed: ${res.status}`);
+    const savedToken = GM_getValue("cprecall_sync_token", null);
+    if (!savedToken) {
+      throw new Error("Missing Extension Key. Please click [ 🔑 Extension Key ] on your CPRecal Dashboard, copy your key, and paste it here.");
     }
 
-    const result = await res.json();
-    log("Submission result:", result);
-    return result;
+    try {
+      const result = await backendRequest(`${BACKEND_URL}/api/ingestion/submission`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+      });
+
+      log("Submission result:", result);
+      return result;
+    } catch (err) {
+      if (err.status === 401) {
+        throw new Error("Invalid or expired Extension Key. Please copy a fresh key from the CPRecal Dashboard.");
+      }
+      throw err;
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -354,7 +418,10 @@
           🧠 CPRecal
           <span id="cr-header-version">v3.0</span>
         </div>
-        <button id="cr-min-btn" title="Minimize">–</button>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <button id="cr-key-btn" title="Extension Key Settings" style="background:none;border:none;color:#fff;cursor:pointer;font-size:14px;padding:2px 4px;opacity:0.85;">🔑</button>
+          <button id="cr-min-btn" title="Minimize">–</button>
+        </div>
       `;
 
       body = document.createElement("div");
@@ -369,6 +436,28 @@
       bubble.title = "Reopen CPRecal";
       bubble.textContent = "CR";
       document.body.appendChild(bubble);
+
+      const keyBtn = header.querySelector("#cr-key-btn");
+      if (keyBtn) {
+        keyBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const current = GM_getValue("cprecall_sync_token", "");
+          const promptMsg = current
+            ? "Your CPRecal Extension Key is currently active.\n\nTo update it, paste your new key below (or leave empty to disconnect):"
+            : "Connect your CPRecal Account:\n\n1. Open https://cprecall.vercel.app\n2. Click the green '[ 🔑 Extension Key ]' button in the top bar\n3. Paste the key below:";
+          const entered = prompt(promptMsg, current);
+          if (entered !== null) {
+            const trimmed = entered.trim();
+            if (trimmed) {
+              GM_setValue("cprecall_sync_token", trimmed);
+              alert("✓ Connected to CPRecal! Your submissions will now sync seamlessly.");
+            } else {
+              GM_setValue("cprecall_sync_token", "");
+              alert("Disconnected from CPRecal.");
+            }
+          }
+        });
+      }
 
       minimizeBtn = header.querySelector("#cr-min-btn");
       minimizeBtn.addEventListener("click", (e) => {
@@ -437,7 +526,7 @@
         const raw = JSON.stringify({ left: x, top: y });
         if (typeof GM_setValue === "function") GM_setValue(WIDGET_POS_KEY, raw);
         else localStorage.setItem(WIDGET_POS_KEY, raw);
-      } catch (_) {}
+      } catch (_) { }
     }
 
     function restorePosition() {
@@ -449,7 +538,7 @@
         const pos = JSON.parse(raw);
         root.style.cssText += `left:${pos.left}px;top:${pos.top}px;right:auto;`;
         bubble.style.cssText += `left:${pos.left}px;top:${pos.top}px;right:auto;`;
-      } catch (_) {}
+      } catch (_) { }
     }
 
     function renderWaiting(problem) {
@@ -457,11 +546,30 @@
         .map((t) => `<span class="cr-tag">${escapeHtml(t)}</span>`)
         .join("") || `<span style="color:#9a9aad">—</span>`;
 
+      const hasKey = !!GM_getValue("cprecall_sync_token", null);
+
       body.innerHTML = `
-        <div class="cr-status-row">
-          <span class="cr-pulse"></span>
-          <span>Tracking your session…</span>
+        <div class="cr-status-row" style="justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="cr-pulse"></span>
+            <span>Tracking session…</span>
+          </div>
+          <span id="cr-sync-badge" style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;background:${hasKey ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'};color:${hasKey ? '#4ade80' : '#f87171'};border:1px solid ${hasKey ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'};">
+            ${hasKey ? '● Connected' : '○ Not Linked'}
+          </span>
         </div>
+
+        <div style="margin:8px 0;padding:8px;background:#181820;border-radius:8px;border:1px solid #2e2e3a;">
+          <div style="font-size:11px;font-weight:600;color:#c7c7d6;margin-bottom:6px;display:flex;justify-content:space-between;">
+            <span>Extension Key</span>
+            <a href="${FRONTEND_URL}" target="_blank" style="color:#60a5fa;text-decoration:none;font-size:10px;">Get Key ↗</a>
+          </div>
+          <div style="display:flex;gap:4px;">
+            <input type="password" id="cr-token-input" placeholder="${hasKey ? '••••••••••••••••' : 'Paste Key from Dashboard'}" style="flex:1;background:#242430;border:1px solid #3e3e4f;border-radius:6px;padding:4px 6px;color:#fff;font-size:11px;outline:none;" />
+            <button id="cr-token-save-btn" style="background:#22c55e;color:#000;font-weight:700;border:none;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;">Save</button>
+          </div>
+        </div>
+
         <div class="cr-divider"></div>
         <div class="cr-row">
           <span class="cr-label">Problem</span>
@@ -476,6 +584,33 @@
           Open CPRecal Dashboard →
         </a>
       `;
+
+      const saveBtn = body.querySelector("#cr-token-save-btn");
+      if (saveBtn) {
+        saveBtn.addEventListener("click", () => {
+          const val = body.querySelector("#cr-token-input")?.value?.trim() || "";
+          if (val) {
+            GM_setValue("cprecall_sync_token", val);
+            const badge = body.querySelector("#cr-sync-badge");
+            if (badge) {
+              badge.textContent = "● Connected";
+              badge.style.color = "#4ade80";
+              badge.style.background = "rgba(34,197,94,0.15)";
+              badge.style.borderColor = "rgba(34,197,94,0.3)";
+            }
+            alert("✓ Extension Key Saved! Your LeetCode solving sessions will now sync directly to DynamoDB.");
+          } else {
+            GM_setValue("cprecall_sync_token", "");
+            const badge = body.querySelector("#cr-sync-badge");
+            if (badge) {
+              badge.textContent = "○ Not Linked";
+              badge.style.color = "#f87171";
+              badge.style.background = "rgba(239,68,68,0.15)";
+              badge.style.borderColor = "rgba(239,68,68,0.3)";
+            }
+          }
+        });
+      }
     }
 
     function renderSuccess(sessionData, { onAnalyze, onSubmit }) {
@@ -686,7 +821,7 @@
   let acceptedDetected = false;
   let pollInterval = null;
   let submissionHistory = [];
-  
+
   // Track the latest submission ID seen at page load so we ignore old submissions
   let lastSeenTopId = null;
 

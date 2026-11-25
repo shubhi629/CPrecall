@@ -9,68 +9,167 @@ import {
   getWeakPatterns,
 } from "../mastery/patternMastery.js";
 import { selectRecallTargets } from "../fsrs/recallSelector.js";
+import { isDynamoDB } from "../../config/dbBackend.js";
+import problemMasteryRepo from "../../repositories/problemMasteryRepo.js";
+import patternMasteryRepo from "../../repositories/patternMasteryRepo.js";
+import fsrsStateRepo from "../../repositories/fsrsStateRepo.js";
+import problemRepo from "../../repositories/problemRepo.js";
+import progressResetRepo from "../../repositories/progressResetRepo.js";
 
 /**
  * Get complete dashboard data for a user
  */
 export async function getDashboardData(userId) {
-  // Total solved problems
-  const totalSolved = await ProblemMastery.countDocuments({ userId });
-
-  // Total attempted (solving sessions)
-  const totalAttempted = await SolvingSession.countDocuments({ userId });
-
-  // Patterns covered
-  const patternsCovered = await PatternMastery.countDocuments({
-    userId,
-    totalProblemsAttempted: { $gt: 0 },
-  });
-
-  // Today's revision (due problems + overdue)
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  // We should include ALL problems whose nextReviewDate is < tomorrow
-  const dueToday = await FSRSState.find({
-    userId,
-    nextReviewDate: {
-      $lt: tomorrow, // Includes past (overdue) and today
-    },
-  })
-    .populate({
-      path: "problemId",
-      select: "title difficulty patterns",
-    })
-    .lean();
+  if (isDynamoDB()) {
+    // 1. Fetch independent core queries in parallel
+    const [stats, allUserPatterns, dueToday, solvedRecords, allPatterns, dismissal, totalProblemsCount] = await Promise.all([
+      problemMasteryRepo.getUserStats(userId),
+      patternMasteryRepo.getUserPatternMasteries(userId),
+      fsrsStateRepo.getDueReviews(userId, tomorrow.toISOString()),
+      problemMasteryRepo.getUserSolvedProblems(userId),
+      problemRepo.getAllPatterns(),
+      progressResetRepo.getCompletionDismissal(userId),
+      problemRepo.getTotalProblemsCount(),
+    ]);
 
-  const resolvedTargets = await selectRecallTargets(dueToday, userId);
-  
-  const todayRecall = resolvedTargets.map(target => ({
+    // Unique active solved count from active mastery records
+    const uniqueSolvedCount = (solvedRecords || []).length;
+    const totalProblems = Number(totalProblemsCount) || 0;
+    const isLibraryCompleted = uniqueSolvedCount === totalProblems && totalProblems > 0;
+    const currentCycle = stats.resetVersion || 0;
+    const completionPromptDismissed = dismissal?.completionCycle === currentCycle;
+
+    // 2. Compute pattern mastery data and rankings in memory (0 network latency)
+    const userPatterns = allUserPatterns || [];
+    const patternsCovered = userPatterns.filter((p) => (p.totalProblemsAttempted || 0) > 0).length;
+    const totalPatterns = allPatterns.length || 1;
+
+    const patternMasteryMap = new Map();
+    userPatterns.forEach((p) => {
+      if (p.pattern) patternMasteryMap.set(p.pattern, p.mastery ?? 0);
+    });
+
+    const weakPatterns = [...userPatterns]
+      .sort((a, b) => (a.mastery ?? 0) - (b.mastery ?? 0))
+      .slice(0, 3);
+
+    const strongPatterns = [...userPatterns]
+      .sort((a, b) => (b.mastery ?? 0) - (a.mastery ?? 0))
+      .slice(0, 3);
+
+    // 3. Batch get metadata for due problems (from memoryCatalog in RAM)
+    const dueProblemIds = dueToday.map((d) => d.problemId);
+    const problemsMeta = await problemRepo.batchGetProblems(dueProblemIds);
+    const probMap = new Map(problemsMeta.map((p) => [(p.problemId || p._id).toString(), p]));
+
+    const populatedDue = dueToday.map((d) => ({
+      ...d,
+      problemId: probMap.get(d.problemId.toString()) || { _id: d.problemId, problemId: d.problemId, patterns: [] },
+    }));
+
+    // 4. Resolve recall targets passing preloaded maps (0 N+1 remote queries)
+    const solvedProblemIds = (solvedRecords || []).map((s) => s.problemId.toString());
+    const resolvedTargets = await selectRecallTargets(
+      populatedDue,
+      userId,
+      patternMasteryMap,
+      solvedProblemIds
+    );
+
+    const todayRecall = resolvedTargets.map((target) => ({
+      id: target.problem.problemId || target.problem._id || target.problem.id,
+      title: target.problem.title,
+      titleSlug: target.problem.titleSlug,
+      difficulty: target.problem.difficulty,
+      patterns: target.problem.patterns,
+      masteryScore: 0,
+      patternsWithMastery: target.patternsWithMastery,
+      reviewDue: true,
+      originalDueProblemId: target.originalDueProblemId,
+    }));
+
+    return {
+      stats: {
+        totalSolved: uniqueSolvedCount,
+        totalAttempted: stats.totalAttempted,
+        totalProblems,
+        isLibraryCompleted,
+        completionPromptDismissed,
+        patternsCovered,
+        patternsAttempted: patternsCovered,
+        totalPatterns,
+        duePatternsCount: todayRecall.length,
+        reviewDue: todayRecall.length,
+        averageMastery: stats.averageMastery,
+      },
+      todaysRevision: todayRecall,
+      weakPatterns,
+      strongPatterns,
+    };
+  }
+
+  // MongoDB mode: Parallelize independent database queries
+  const [
+    totalSolved,
+    totalAttempted,
+    patternsCovered,
+    dueToday,
+    allPatternMasteries,
+    allMasteries,
+    uniquePatterns,
+  ] = await Promise.all([
+    ProblemMastery.countDocuments({ userId }),
+    SolvingSession.countDocuments({ userId }),
+    PatternMastery.countDocuments({ userId, totalProblemsAttempted: { $gt: 0 } }),
+    FSRSState.find({ userId, nextReviewDate: { $lt: tomorrow } })
+      .populate({ path: "problemId", select: "title difficulty patterns" })
+      .lean(),
+    PatternMastery.find({ userId }).lean(),
+    ProblemMastery.find({ userId }).select("mastery problemId").lean(),
+    Problem.distinct("patterns"),
+  ]);
+
+  const patternMasteryMap = new Map();
+  allPatternMasteries.forEach((p) => {
+    if (p.pattern) patternMasteryMap.set(p.pattern, p.mastery ?? 0);
+  });
+
+  const solvedProblemIds = allMasteries.map((m) => m.problemId.toString());
+  const resolvedTargets = await selectRecallTargets(
+    dueToday,
+    userId,
+    patternMasteryMap,
+    solvedProblemIds
+  );
+
+  const todayRecall = resolvedTargets.map((target) => ({
     id: target.problem._id,
     title: target.problem.title,
     titleSlug: target.problem.titleSlug,
     difficulty: target.problem.difficulty,
     patterns: target.problem.patterns,
-    masteryScore: 0, // Unsolved
+    masteryScore: 0,
     patternsWithMastery: target.patternsWithMastery,
     reviewDue: true,
     originalDueProblemId: target.originalDueProblemId,
   }));
 
-  // Weak and strong patterns
-  const weakPatterns = await getWeakPatterns(userId, 3);
-  const strongPatterns = await getStrongPatterns(userId, 3);
+  const weakPatterns = [...allPatternMasteries]
+    .sort((a, b) => (a.mastery ?? 0) - (b.mastery ?? 0))
+    .slice(0, 3);
+  const strongPatterns = [...allPatternMasteries]
+    .sort((a, b) => (b.mastery ?? 0) - (a.mastery ?? 0))
+    .slice(0, 3);
 
-  // Compute average mastery across all solved problems
-  const allMasteries = await ProblemMastery.find({ userId }).select("mastery");
   const averageMastery = allMasteries.length > 0
     ? Math.round(allMasteries.reduce((sum, m) => sum + (m.mastery || 0), 0) / allMasteries.length)
     : 0;
 
-  // Total unique patterns in DB
-  const uniquePatterns = await Problem.distinct("patterns");
   const totalPatterns = uniquePatterns.length || 1;
 
   return {
@@ -94,24 +193,44 @@ export async function getDashboardData(userId) {
  * Get stats only (lighter weight)
  */
 export async function getDashboardStats(userId) {
-  const totalSolved = await ProblemMastery.countDocuments({ userId });
-  const totalAttempted = await SolvingSession.countDocuments({ userId });
-  const patternsCovered = await PatternMastery.countDocuments({
-    userId,
-    totalProblemsAttempted: { $gt: 0 },
-  });
-
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  const reviewDue = await FSRSState.countDocuments({
-    userId,
-    nextReviewDate: {
-      $lt: tomorrow, // Overdue + due today
-    },
-  });
+  if (isDynamoDB()) {
+    const [stats, allUserPatterns, dueToday, solvedRecords, dismissal, totalProblemsCount] = await Promise.all([
+      problemMasteryRepo.getUserStats(userId),
+      patternMasteryRepo.getUserPatternMasteries(userId),
+      fsrsStateRepo.getDueReviews(userId, tomorrow.toISOString()),
+      problemMasteryRepo.getUserSolvedProblems(userId),
+      progressResetRepo.getCompletionDismissal(userId),
+      problemRepo.getTotalProblemsCount(),
+    ]);
+    const patternsCovered = (allUserPatterns || []).filter((p) => (p.totalProblemsAttempted || 0) > 0).length;
+    const uniqueSolvedCount = (solvedRecords || []).length;
+    const totalProblems = Number(totalProblemsCount) || 0;
+    const isLibraryCompleted = uniqueSolvedCount === totalProblems && totalProblems > 0;
+    const currentCycle = stats.resetVersion || 0;
+    const completionPromptDismissed = dismissal?.completionCycle === currentCycle;
+
+    return {
+      totalSolved: uniqueSolvedCount,
+      totalAttempted: stats.totalAttempted,
+      totalProblems,
+      isLibraryCompleted,
+      completionPromptDismissed,
+      patternsCovered,
+      reviewDue: dueToday.length,
+    };
+  }
+
+  const [totalSolved, totalAttempted, patternsCovered, reviewDue] = await Promise.all([
+    ProblemMastery.countDocuments({ userId }),
+    SolvingSession.countDocuments({ userId }),
+    PatternMastery.countDocuments({ userId, totalProblemsAttempted: { $gt: 0 } }),
+    FSRSState.countDocuments({ userId, nextReviewDate: { $lt: tomorrow } }),
+  ]);
 
   return {
     totalSolved,

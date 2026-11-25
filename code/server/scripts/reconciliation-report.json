@@ -1,0 +1,64 @@
+{
+  "timestamp": "2026-10-26T19:48:09.459Z",
+  "counts": {
+    "users": {
+      "mongo": 15,
+      "dynamoTotal": 17,
+      "mongoMatched": 15,
+      "coverage": "100%"
+    },
+    "problems": {
+      "mongo": 4027,
+      "dynamoTotal": 4032,
+      "mongoMatched": 4027,
+      "coverage": "100%"
+    },
+    "problemMasteries": {
+      "mongo": 20,
+      "dynamoTotal": 21,
+      "mongoMatched": 20,
+      "coverage": "100%"
+    },
+    "acceptedSolutions": {
+      "mongo": 32,
+      "dynamoTotal": 33,
+      "mongoMatched": 32,
+      "coverage": "100%"
+    },
+    "fsrsStates": {
+      "mongo": 20,
+      "dynamoTotal": 21,
+      "mongoMatched": 20,
+      "coverage": "100%"
+    },
+    "patternMasteries": {
+      "mongo": 34,
+      "dynamoTotal": 44,
+      "mongoMatched": 34,
+      "coverage": "100%"
+    },
+    "solvingSessions": {
+      "mongo": 37,
+      "dynamoTotal": 42,
+      "mongoMatched": 37,
+      "coverage": "100%"
+    },
+    "submissions": {
+      "mongo": 49,
+      "dynamoTotal": 59,
+      "mongoMatched": 49,
+      "coverage": "100%"
+    },
+    "reviewHistories": {
+      "mongo": 26,
+      "dynamoTotal": 35,
+      "mongoMatched": 26,
+      "coverage": "100%"
+    },
+    "userStats": {
+      "dynamoCount": 10
+    }
+  },
+  "discrepancies": [],
+  "passed": true
+}

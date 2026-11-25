@@ -7,6 +7,8 @@ import {
   calculateFinalMastery,
 } from "./scoring.js";
 import ProblemMastery from "../../models/ProblemMastery.js";
+import { isDynamoDB } from "../../config/dbBackend.js";
+import problemMasteryRepo from "../../repositories/problemMasteryRepo.js";
 
 /**
  * Calculate complete problem mastery from raw submission data
@@ -64,6 +66,10 @@ export async function calculateProblemMastery(submissionData) {
  * Save problem mastery to database
  */
 export async function saveProblemMastery(userId, problemId, masteryData) {
+  if (isDynamoDB()) {
+    return problemMasteryRepo.saveProblemMastery(userId, problemId, masteryData);
+  }
+
   const {
     solvingSessionId,
     acceptedSubmissionId,
@@ -97,6 +103,9 @@ export async function saveProblemMastery(userId, problemId, masteryData) {
  * Get problem mastery for a user
  */
 export async function getProblemMastery(userId, problemId) {
+  if (isDynamoDB()) {
+    return problemMasteryRepo.getProblemMastery(userId, problemId);
+  }
   return ProblemMastery.findOne({ userId, problemId });
 }
 
@@ -104,6 +113,9 @@ export async function getProblemMastery(userId, problemId) {
  * Get all problem masteries for a user, sorted by mastery
  */
 export async function getUserProblemMasteries(userId, filter = {}) {
+  if (isDynamoDB()) {
+    return problemMasteryRepo.getUserSolvedProblems(userId);
+  }
   return ProblemMastery.find({ userId, ...filter }).sort({ mastery: -1 });
 }
 
@@ -111,6 +123,9 @@ export async function getUserProblemMasteries(userId, filter = {}) {
  * Get problems solved by user
  */
 export async function getSolvedProblems(userId) {
+  if (isDynamoDB()) {
+    return problemMasteryRepo.getUserSolvedProblems(userId);
+  }
   return ProblemMastery.find({ userId }).select("problemId mastery");
 }
 
@@ -118,6 +133,10 @@ export async function getSolvedProblems(userId) {
  * Calculate average mastery for a user
  */
 export async function getUserAverageMastery(userId) {
+  if (isDynamoDB()) {
+    return problemMasteryRepo.getUserAverageMastery(userId);
+  }
+
   const result = await ProblemMastery.aggregate([
     { $match: { userId: userId } },
     {

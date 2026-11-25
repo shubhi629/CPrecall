@@ -2,6 +2,12 @@ import FSRSState from "../models/FSRSState.js";
 import ProblemMastery from "../models/ProblemMastery.js";
 import ReviewHistory from "../models/ReviewHistory.js";
 import { updateAfterReview } from "../services/fsrs/scheduler.js";
+import { isDynamoDB } from "../config/dbBackend.js";
+import problemMasteryRepo from "../repositories/problemMasteryRepo.js";
+import fsrsStateRepo from "../repositories/fsrsStateRepo.js";
+import reviewHistoryRepo from "../repositories/reviewHistoryRepo.js";
+import problemRepo from "../repositories/problemRepo.js";
+import progressResetRepo from "../repositories/progressResetRepo.js";
 
 /**
  * POST /api/reviews
@@ -22,6 +28,54 @@ export const submitReview = async (req, res, next) => {
     if (!["completed", "skipped", "failed"].includes(status)) {
       return res.status(400).json({
         message: "Status must be completed, skipped, or failed",
+      });
+    }
+
+    if (isDynamoDB()) {
+      if (await progressResetRepo.isResetInProgress(userId)) {
+        return res.status(409).json({
+          message: "Cannot submit review: account progress reset is currently in progress.",
+          code: "RESET_IN_PROGRESS",
+        });
+      }
+
+      const mastery = await problemMasteryRepo.getProblemMastery(userId, problemId);
+      if (!mastery) {
+        return res.status(404).json({
+          message: "Problem not found or not yet solved by this user",
+        });
+      }
+
+      const fsrsState = await fsrsStateRepo.getFSRSState(userId, problemId);
+      if (!fsrsState) {
+        return res.status(404).json({
+          message: "FSRS state not found",
+        });
+      }
+
+      const updatedFSRS = await updateAfterReview(userId, problemId, status);
+
+      await reviewHistoryRepo.createReviewHistory({
+        userId,
+        problemId,
+        reviewedAt: new Date(),
+        previousMastery: mastery.mastery,
+        newMastery: mastery.mastery,
+        fsrsRating: updatedFSRS.rating,
+        status,
+        satisfiedByProblemId: satisfiedByProblemId || null,
+      });
+
+      return res.status(200).json({
+        success: true,
+        updated: {
+          mastery: mastery.mastery,
+          fsrs: {
+            rating: updatedFSRS.rating,
+            nextReviewDate: updatedFSRS.nextReviewDate,
+            intervalDays: updatedFSRS.intervalDays,
+          },
+        },
       });
     }
 
@@ -92,6 +146,44 @@ export const getReviewsDue = async (req, res, next) => {
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
+
+    if (isDynamoDB()) {
+      const dueItems = await fsrsStateRepo.getDueReviews(userId, tomorrow.toISOString());
+      // Filter for items due today (or overdue)
+      const dueToday = dueItems.filter((item) => new Date(item.nextReviewDate) >= today);
+      const problemIds = dueToday.map((item) => item.problemId);
+
+      const [problems, masteries] = await Promise.all([
+        problemRepo.batchGetProblems(problemIds),
+        problemMasteryRepo.batchGetProblemMasteries(userId, problemIds),
+      ]);
+
+      const problemMap = new Map(problems.map((p) => [(p.problemId || p._id).toString(), p]));
+      const masteryMap = new Map(masteries.map((m) => [m.problemId.toString(), m]));
+
+      const reviews = dueToday.map((item) => {
+        const pIdStr = item.problemId.toString();
+        const prob = problemMap.get(pIdStr);
+        const mast = masteryMap.get(pIdStr);
+
+        return {
+          id: item.problemId,
+          title: prob?.title || "",
+          difficulty: prob?.difficulty || "Medium",
+          patterns: prob?.patterns || [],
+          masteryScore: mast?.mastery ?? 0,
+          fsrs: {
+            rating: item.rating,
+            nextReviewDate: item.nextReviewDate,
+          },
+        };
+      });
+
+      return res.status(200).json({
+        reviews,
+        count: reviews.length,
+      });
+    }
 
     const due = await FSRSState.find({
       userId,
