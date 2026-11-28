@@ -1,41 +1,51 @@
-﻿# CP Recall
+# CP Recall
 
 ## Adaptive Competitive Programming Pattern Retention System
 
-CP Recall is a browser extension and companion dashboard that helps competitive programmers retain the **patterns** behind the problems they solve, not just the problems themselves.
+CP Recall is a full-stack web application paired with a Tampermonkey browser extension
+that helps competitive programmers build long-term retention of **DSA algorithmic
+patterns**, not just individual problem solutions.
 
-The system works alongside platforms like LeetCode, tracking pattern-level mastery and using spaced repetition to resurface a *different* problem from the same pattern family when a concept is due for review — testing true understanding and transfer, not memorized solutions.
-
----
-
-## Problem
-
-Competitive programmers solve hundreds of problems, but often forget the underlying patterns weeks later.
-
-Existing platforms track problems solved, not whether the pattern behind them has actually been retained.
-
-CP Recall solves this by treating patterns — not individual problems — as the unit of learning and review.
+The system integrates directly into LeetCode. When a problem is solved, the extension
+records the solving session, sends the accepted code to an AI model for complexity
+analysis, computes a multi-component mastery score, and schedules a future review
+using a simplified FSRS-inspired scheduler — critically, the review surfaces a
+**different, unsolved problem** from the same algorithmic pattern family, testing
+genuine conceptual transfer rather than memorisation.
 
 ---
 
-## Objectives
+## The Core Insight
 
-CP Recall aims to:
+Most competitive programming platforms track *how many* problems a user has solved.
+CP Recall tracks *how well* the user has retained the **pattern** behind each problem.
 
-- Track pattern-level mastery of DSA / competitive programming patterns
-- Schedule reviews using FSRS (Free Spaced Repetition Scheduler)
-- Surface a different problem from the same pattern family to test retention and transfer
-- Integrate directly into the existing LeetCode workflow via a browser extension
-
----
-
-## How It Works
-
-1. The browser extension detects when a problem is solved on LeetCode and tags it with its underlying pattern.
-2. FSRS calculates when each pattern is next due for review based on performance.
-3. When a pattern is due, CP Recall surfaces a new, unseen problem from the same pattern family.
-4. Review status is shown directly on the Home Dashboard, Pattern Dashboard, Problem Library, and Problem Details — no separate revision screen needed.
+> A user who solved a Sliding Window problem three weeks ago and cannot recognise a new
+> Sliding Window problem has not retained the concept. CP Recall detects and corrects this.
 
 ---
 
-*Team Nexus 3 — Subham Kumar, Tanush Grover, Shubhi Singh*
+## How the System Works
+
+1. **Extension detects** when a problem is accepted on LeetCode
+2. **LLM analyses** the accepted code for time and space complexity using Gemini 2.0 Flash
+3. **Mastery is computed** from 5 dimensions: solution efficiency, time complexity,
+   submission count, time taken, and hints used
+4. **FSRS schedules** the next review interval based on the mastery score
+5. **Dashboard surfaces** a different, unsolved problem from the same weak pattern when
+   the review interval matures
+6. **Marking a recall as done** extends the FSRS interval; failing resets it
+
+---
+
+## Project Team
+
+**Team Nexus 3** — Thapar Institute of Engineering and Technology
+
+| Member | Roll No. *(pending final team confirmation)* |
+|---|---|
+| Subham Kumar | 1024030665 |
+| Tanush Grover | 1024030666 |
+| Shubhi Singh | 1024030669 |
+
+Submitted as part of **UCS503: Software Engineering** (2026–27, Odd Semester).
